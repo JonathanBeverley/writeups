@@ -9,8 +9,8 @@ First things first, we open the firmware.hex in IDA. However, IDA cannot detect 
 For IDA "Atmel AVR" and "ATmega16_L" is enough. However, you can get a more accurate .cfg file from [github:SilverBut/avr_helper](https://github.com/SilverBut/avr_helper).
 
 Skimming the binary, we notice the following basic facts:
-    - There are a bunch of suspicious constants at ``ROM:0035``, and ``ROM:06D3``
-    - There is a function at ``loc_5C4`` that isn't recognized. That means nothing is seen to be invoking it. That's odd in a binary this small.
+- There are a bunch of suspicious constants at ``ROM:0035``, and ``ROM:06D3``
+- There is a function at ``loc_5C4`` that isn't recognized. That means nothing is seen to be invoking it. That's odd in a binary this small.
 
 Important Note: IDA counts ROM offsets in 16-bit words. Nothing else does. Consider the following disassembly.
 ```
@@ -26,13 +26,13 @@ ROM:006E 9005                      lpm     r0, Z+          ; Load Program Memory
 ROM:006F 920D                      st      X+, r0          ; Store Indirect
 ```
 
-All the registers on this chip are 8-bit, and all instructions are 16-bit, so it takes two instructions to load a 16-bit address into a pair of registers. The first two pairs of lines do ``X:=0x100``, and ``Z:=0xDA6``. Now, Z is used to load **program** memory, that means ROM, so while the chip and GDB call this 0xDA6, IDA calls it ``ROM:06D3``. On the other hand, when it's written to the address in X, it goes to ``RAM:0100``. No translation necessary.
+All the registers on this chip are 8-bit, and all instructions are 16-bit. Note how the addresses at the left are only going up by 1 per line, but there are clearly two bytes per line. Further, it takes two instructions to load a 16-bit address into a pair of registers. The first two pairs of lines do ``X:=0x100``, and ``Z:=0xDA6``. Now, Z is used to load **program** memory, that means ROM, so while the chip and GDB call this 0xDA6, IDA calls it ``ROM:06D3``. On the other hand, when it's written to the address in X, it goes to ``RAM:0100``. No translation necessary.
 
 So, summary of _RESET:
-    .rwdata is 38 bytes, comes from ``ROM:06D3``, and goes to ``RAM:0100``
-    .bss is 172 bytes, and starts at ``RAM:0126``
-    init() is at ``ROM:0061`` and invokes ``sub_5C4``
-    main() is ``sub_376``
+- .rwdata is 38 bytes, comes from ``ROM:06D3``, and goes to ``RAM:0100``
+- .bss is 172 bytes, and starts at ``RAM:0126``
+- init() is at ``ROM:0061`` and invokes ``sub_5C4``
+- main() is ``sub_376``
 
 Main is unfortunately both large and complicated. However, there are a couple hints as to the right place to look. First, there's this suspicious disassembly. The keypad has '*' and '#' buttons:
 ```asm
@@ -73,20 +73,21 @@ My first choice for simulating AVR binaries is [simavr](https://github.com/buser
 There's a nice emulator at [wowki](wokwi.com), which supports either source or .hex, and peripherals, and debugging, but not debugging of .hex; otherwise it's great.
 
 The one that worked for me was [PICSIMLab](https://github.com/lcgamboa/picsim). Steps:
-    - File -> Load Hex -> machine.ino.standard.hex
-    - File -> Configure -> AVR DBG: GDB
-    - MHz:16
-    - Modules -> Spare Parts -> Input:"Keypad" and Output:"Servo Motor"
-        - click somewhere to spawn them
-        - right-click -> properties -> set the pin connections.
-    - Debug
+- File -> Load Hex -> machine.ino.standard.hex
+- File -> Configure -> AVR DBG: GDB
+- MHz:16
+- Modules -> Spare Parts -> Input:"Keypad" and Output:"Servo Motor"
+    - click somewhere to spawn them
+    - right-click -> properties -> set the pin connections.
+- Debug
 
 Having done that, gdb-avr can connect to the running simulation and remote debug it. You need to use a Windows Native gdb-avr, Atmel Studio includes one in the installer. Supposedly you can also download it directly from [Microchip](https://www.microchip.com).
 
 Based on the above, we want three breakpoints:
-    - IDA:54D -- right after ``lds r18, loc_100158`` where the pressed key is checked
-    - IDA:562 -- right before ``strcmp(input, code)``
-    - IDA:56C -- after all checks have passed.
+- IDA:54D -- right after ``lds r18, loc_100158`` where the pressed key is checked
+- IDA:562 -- right before ``strcmp(input, code)``
+- IDA:56C -- after all checks have passed.
+
 The following gdbinit file will do that, print out the interesting values and continue processing. Note *2 to convert IDA word-offsets into GDB byte-offsets and the casting to function pointers to tell GDB to set the breakpoint in ROM (otherwise it will uselessly set one in RAM).
 
 ```gdb
@@ -141,4 +142,4 @@ Breakpoint 2, 0x00000ac4 in ?? ()
 
 At this point everything is clear. We need to hit 11 numeric buttons to get RAM:136 up to 0xb, and the keys are stored in an 8-byte ring buffer, so the first three numbers we enter will be overwritten by the last three. With this in hand, we can enter the code "00052912734#" and claim our tasty gumball.
 
-![Composite of PICSimLab and gdb showing interacting with the simulator and activating the servo motor](assets/candy-simulation.mp4 "Candy Simulator")
+https://github.com/JonathanBeverley/writeups/assets/20328966/76aa31c8-a8bf-4458-8ee9-0498562628ac
