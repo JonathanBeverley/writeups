@@ -1,3 +1,7 @@
+---
+title: "Candy Machine"
+weight: 1
+---
 
 # Candy Machine
 At one of the tables, there was a gumball machine with a numeric keypad. We were given [the firmware](assets/candy-machine.ino), and a schematic:

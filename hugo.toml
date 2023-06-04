@@ -1,0 +1,11 @@
+baseURL = 'http://jonathanbeverley.github.io/'
+languageCode = 'en-us'
+title = "Sagefault's Write-Ups"
+[module]
+[[module.imports]]
+  path = "github.com/McShelby/hugo-theme-relearn"
+
+[params]
+  # Set this to true to disable copy-to-clipboard button for inline code.
+  disableInlineCopyToClipBoard = true
+
