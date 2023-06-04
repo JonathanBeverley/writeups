@@ -3,9 +3,10 @@ title: "Candy Machine"
 weight: 1
 ---
 
-# Candy Machine
-At one of the tables, there was a gumball machine with a numeric keypad. We were given [the firmware](assets/candy-machine.ino), and a schematic:
-![A Arduino UNO R3, with pins D3-D9 connecteed to a 3x4 matrix keypad, and pin D11 connected to a servo motor](assets/candy-schematic.png "Candy Schematic")
+At one of the tables, there was a gumball machine full of flags. But it didn't take coins, it took a code, entered with a numeric keypad.
+
+We were given the firmware: [machine.ino.standard.hex](machine.ino.standard.hex), and a schematic:
+![An Arduino UNO R3, with pins D3-D9 connecteed to a 3x4 matrix keypad, and pin D11 connected to a servo motor](candy-schematic.png)
 
 ## Reverse Engineering
 First things first, we open the firmware.hex in IDA. However, IDA cannot detect binary types with .hex files. From the provided diagram, we know it's an Arduino UNO R3, which uses an ATMEL ATMEGA328P.
@@ -17,7 +18,7 @@ Skimming the binary, we notice the following basic facts:
 - There is a function at ``loc_5C4`` that isn't recognized. That means nothing is seen to be invoking it. That's odd in a binary this small.
 
 Important Note: IDA counts ROM offsets in 16-bit words. Nothing else does. Consider the following disassembly.
-```
+```asm
 ROM:0069 E0A0                      ldi     XL, 0           ; Load Immediate
 ROM:006A E0B1                      ldi     XH, 1           ; Load Immediate
 ROM:006B EAE6                      ldi     ZL, 0xA6        ; Load Immediate
@@ -30,7 +31,7 @@ ROM:006E 9005                      lpm     r0, Z+          ; Load Program Memory
 ROM:006F 920D                      st      X+, r0          ; Store Indirect
 ```
 
-All the registers on this chip are 8-bit, and all instructions are 16-bit. Note how the addresses at the left are only going up by 1 per line, but there are clearly two bytes per line. Further, it takes two instructions to load a 16-bit address into a pair of registers. The first two pairs of lines do ``X:=0x100``, and ``Z:=0xDA6``. Now, Z is used to load **program** memory, that means ROM, so while the chip and GDB call this 0xDA6, IDA calls it ``ROM:06D3``. On the other hand, when it's written to the address in X, it goes to ``RAM:0100``. No translation necessary.
+Note how the addresses at the left are only going up by 1 per line, but there are clearly two bytes per line. All the registers on this chip are 8-bit, and all instructions are 16-bit. Therefore, it takes two instructions to load a 16-bit address into a pair of registers. The first two pairs of lines do `X:=0x100`, and `Z:=0xDA6`. Now, Z is used to load **program** memory, that means ROM, so while the chip and GDB call this 0xDA6, IDA calls it `ROM:06D3`. On the other hand, when it's written to the address in X, it goes to `RAM:0100`. No translation necessary.
 
 So, summary of _RESET:
 - .rwdata is 38 bytes, comes from ``ROM:06D3``, and goes to ``RAM:0100``
@@ -47,7 +48,7 @@ ROM:055C F009                      breq    loc_55E         ; Branch if Equal
 ```
 
 Second, there's the two strings at the end of ROM, this is the second set of "suspicious constants" mentioned above. (easiest to show in gdb, but just as visible in IDA):
-```gdb
+```bash
 (gdb) x/s 0xDA6 + 0x7
 0xdad:  "123456789*0#"
 (gdb) x/s 0xDA6 + 0x1D
@@ -64,7 +65,7 @@ ROM:0562 940E 06C8                 call    sub_6C8         ; Call Subroutine
 ROM:0564 2B89                      or      r24, r25        ; Logical OR
 ROM:0565 F599                      brne    loc_599         ; Branch if Not Equal
 ```
-It's not hard to guess what sub_6C8 is going to do with two pointers, but a a little reversing confirms that it is ``strcmp()``. Next would be finding out where and how ``RAM:0012D`` is populated, but that's hard. (The challenge creator later mentioned he used a standard library for this, which explains the complexity of the code that reads pins and converts the button to ASCII.)
+It's not hard to guess what sub_6C8 is going to do with two pointers, but a little reversing confirms that it is ``strcmp()``. Next would be finding out where and how ``RAM:0012D`` is populated, but that's hard. (The challenge creator later mentioned he used a standard library for this, which explains the complexity of the code that reads pins and converts the button to ASCII.)
 
 ## Keypads
 A brief aside on keypads:
@@ -76,7 +77,7 @@ My first choice for simulating AVR binaries is [simavr](https://github.com/buser
 
 There's a nice emulator at [wowki](wokwi.com), which supports either source or .hex, and peripherals, and debugging, but not debugging of .hex; otherwise it's great.
 
-The one that worked for me was [PICSIMLab](https://github.com/lcgamboa/picsim). Steps:
+The one that did all three is [PICSIMLab](https://github.com/lcgamboa/picsim). Steps:
 - File -> Load Hex -> machine.ino.standard.hex
 - File -> Configure -> AVR DBG: GDB
 - MHz:16
@@ -87,14 +88,14 @@ The one that worked for me was [PICSIMLab](https://github.com/lcgamboa/picsim). 
 
 Having done that, gdb-avr can connect to the running simulation and remote debug it. You need to use a Windows Native gdb-avr, Atmel Studio includes one in the installer. Supposedly you can also download it directly from [Microchip](https://www.microchip.com).
 
-Based on the above, we want three breakpoints:
+## Dynamic Analysis
+Based on the above, we want two breakpoints:
 - IDA:54D -- right after ``lds r18, loc_100158`` where the pressed key is checked
 - IDA:562 -- right before ``strcmp(input, code)``
-- IDA:56C -- after all checks have passed.
 
-The following gdbinit file will do that, print out the interesting values and continue processing. Note *2 to convert IDA word-offsets into GDB byte-offsets and the casting to function pointers to tell GDB to set the breakpoint in ROM (otherwise it will uselessly set one in RAM).
+The following gdbinit file will create those breakpoints with command blocks to print out the interesting values and continue processing. Note the `*2` to convert IDA word-offsets into GDB byte-offsets and the casting to function pointers to tell GDB to set the breakpoint in ROM (otherwise it will uselessly set them in RAM).
 
-```gdb
+```bash
 # setup
 set pagination off
 target remote:1234
@@ -113,13 +114,10 @@ commands
     x/s 0x12d
     continue
 end
-
-# break on successful code entry
-break *(void(*)())(0x56c*2)
 ```
 
 At this point we can push buttons on the gui and see how things work out. For example the sequence "258#" gives this output:
-```gdb
+```bash
 Breakpoint 1, 0x00000a9a in ?? ()
 $1 = 0x32
 
@@ -138,12 +136,15 @@ Breakpoint 2, 0x00000ac4 in ?? ()
 ```
 
 And the sequence "12345678901#" gives output that ends with
-```gdb
+```bash
 Breakpoint 2, 0x00000ac4 in ?? ()
 0x800136:       0x0b
 0x80012d:       "90145678"
 ```
 
+## Results
 At this point everything is clear. We need to hit 11 numeric buttons to get RAM:136 up to 0xb, and the keys are stored in an 8-byte ring buffer, so the first three numbers we enter will be overwritten by the last three. With this in hand, we can enter the code "00052912734#" and claim our tasty gumball.
 
-https://github.com/JonathanBeverley/writeups/assets/20328966/76aa31c8-a8bf-4458-8ee9-0498562628ac
+{{< video src="candy-simulation.mp4" type="video/mp4" preload="auto" >}}
+
+After the CTF was over, the challenge creator also provided the [Candy Machine Source INO](candy-machine.ino).
