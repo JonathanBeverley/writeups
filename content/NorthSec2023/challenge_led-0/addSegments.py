@@ -8,7 +8,7 @@ Segments = [
         # ["sram2",    0x3FFAE000, 0x3FFDFFFF, NEF_DATA, 6], # already mapped: .dram0.data
         ["peripheral", 0x3FF00000, 0x3FF7FFFF, NEF_DATA, 6], # memory-mapped IO
         # ["eflash-0", 0x3F400000, 0x3F7FFFFF, NEF_DATA, 4], # already mapped: .flash.rodata
-        # ["eflash-1", 0x400C2000, 0x40BFFFFF, NEF_CODE, 5], # already mapped: .flash.text is a subset of this
+        # ["eflash-1", 0x400C2000, 0x40BFFFFF, NEF_CODE, 5], # already mapped: .flash.text
         # ["eram",     0x3F800000, 0x3FBFFFFF, NEF_DATA, 6], # I'm not sure how to download this
         ]
 

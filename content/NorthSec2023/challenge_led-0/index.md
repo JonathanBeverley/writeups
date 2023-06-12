@@ -1,18 +1,19 @@
 ---
-title: "challenge_led prep"
+title: "challenge_led Intro"
 weight: 2
-draft: true
 ---
 
 ## TLDR
+Despite the implication, this is not a write-up for any particular NSEC challenge. Instead, it is a general guide to reverse engineering the Xtensa ESP32. This block is an outline and reference guide. More details follow.
+
 1. Get esptool: `pipx install esptool`
     - basic information: `esptool.py flash_id`
     - read flash: `esptool.py --chip esp32 --baud 2000000 --port /dev/ttyUSB0 read_flash 0x0 0x400000 firmware-4M.bin`
-    - above but `dump_mem`, with different offsets
+    - dump memory: above but `dump_mem`, with different offsets
     - [script to dump all segments](dumpSegments.sh)
 2. Get esp32knife: `git clone https://github.com/BlackVS/esp32knife`
+    - produce a .elf for IDA:
     - `python3 esp32knife/esp32knife.py --chip=esp32 load_from_file eflash.bin`
-    -> produces a .elf for IDA
 3. Generating FLIRT Signatures
     - get previous badge `git clone https://github.com/nsec/nsec-badge`
     - build it
@@ -27,10 +28,11 @@ draft: true
     - disable Analysis
     - [script to load segments](addSegments.py)
     - enable Analysis
-    - consider "unreference subroutine" script, below
+    - [script to add_func unreferenced subs](createFunctions.py)
 6. Get to work.
+    - GLHF
 
-## Basics
+## Basics / esptool
 ### Installation:
 I'll be including full esptool outputs in this section, and they can get long, so mostly, comments will go above the code blocks they reference. In this case, this is just a note that the esptool in APT is ~4 years out of date, so you should get one from pip.
 ```sh
@@ -39,7 +41,7 @@ pipx install esptool
 
 ### Chip Identification:
 The `flash_id` command doesn't need arguments, as it can figure them out itself. The most important lines of the dump below are the following:
-- ESP32-D0WDQ6
+- Chip is ESP32-D0WDQ6
 - Crystal is 40MHz
 - Detected flash size: 4MB
 ```sh
@@ -129,11 +131,12 @@ BLOCK3 (BLOCK3):                   Variable Block 3                             
 Flash voltage (VDD_SDIO) determined by GPIO12 on reset 
 ```
 
-### Firmware Dump:
-    - `read_flash` takes offset, size in bytes, and filename.
-    - this command is slow. Took over six minutes at default `--baud 115200`.
-    - ESP32 supports faster speeds, `--baud 921600`, is the highest recommended.
-    - the fastest I could run at was `--baud 2000000`. It downloaded in 30.7s. I did get occasional errors at this speed. Perhaps `--baud 1500000` is safer.
+### Firmware Dump
+- `read_flash` takes offset, size in bytes, and filename.
+- this command is slow. Took over six minutes at default `--baud 115200`.
+- ESP32 supports faster speeds, `--baud 921600`, is the highest recommended.
+- the fastest I could run at was `--baud 2000000`. It downloaded in 30.7s. I did get occasional errors at this speed. Perhaps `--baud 1500000` is safer.
+
 ```sh
 [2](Ghroth)❯ esptool.py --chip esp32 --baud 2000000 --port /dev/ttyUSB0 read_flash 0x0 0x400000 firmware-4M.bin
 esptool.py v4.5.1
@@ -158,7 +161,13 @@ One of the many annoying things about reversing firmwares is finding the loader 
 
 ```sh
 [0](Ghroth)❯ esptool.py --chip esp32 --baud 115200 --port /dev/ttyUSB0 dump_mem $((0x4000_0000)) $((0x4006_0000-0x4000_0000)) irom0.bin
-``
+```
+
+I am providing a shell script to dump all the memory segments I could identify:
+{{% codefile code=sh file=dumpSegments.sh %}}
+
+Once you've got them all, you need to add them to IDA. Manually, this is done with File->Load file->Additional binary file..., followed by Segments->Edit Segment->..., but that's a lot of manual work. Instead, we could spend way more time browsing the IDAPython documentation and write a script to do it (use with File->Script File) (running it multiple times may be helpful):
+{{% codefile code=py file=addSegments.py %}}
 
 ## Reverse Engineering
 ### FLAIR Signatures
@@ -166,20 +175,21 @@ The NorthSec CTF Team kindly posted the sources for their [2021 North Sectoria "
 
 Do NOT accidentally flash the Tie badge with the Horsey firmware. 
 
-Once it's build (crossed-fingers), `ida64 ./build/nsec-esp32.elf` and let it process. The get `idb2pat` from [github:Mandiant FLARE](https://github.com/mandiant/flare-ida), and File->Script File->idb2pat.py, then save the result.
+Once it's built (crossed-fingers), `ida64 ./build/nsec-esp32.elf` and let it process. Then get `idb2pat` from [github:Mandiant FLARE](https://github.com/mandiant/flare-ida), and File->Script File->idb2pat.py, then save the result.
 
 At this point you should use `sigmake` to convert the .pat file into a .sig file, which is reasonably well documented elsewhere. Also, I don't have an up-to-date copy of the IDA SDK, so I can't do it myself. :(
 
 ### Missing Instructions
-The Xtensa MCU module that IDA 8.0 has doesn't disassemble all the instructions on this badge, so we're going to need to extend it. There is a great article on this: [Adding instructions to the IDA processor module with a new plugin](https://www.apriorit.com/dev-blog/reverse-extend-ida-capabilities-with-python).
+The Xtensa MCU module that IDA 8.0 has doesn't disassemble all the instructions on this badge, so we're going to need to extend it. There is a great article on this by Anton@Apriorit: [Adding instructions to the IDA processor module with a new plugin](https://www.apriorit.com/dev-blog/reverse-extend-ida-capabilities-with-python).
 
 However, it's still missing a couple instructions. For example, the following.
 ```asm
 .flash.text:40102950                 .byte 0x3D ; =
 .flash.text:40102951                 .byte 0xF0
 ```
-An easy what to find out what's missing is to use gcc/objdump. I found this method in this insightful [stackexchange comment](https://reverseengineering.stackexchange.com/questions/22223/use-gcc-and-objdump-to-disassemble-any-hex-to-assembly-code/23369#23369). Consider the following:
-```c opcode.c
+An easy way to find out what's missing is to use gcc/objdump. I found this method in a useful [stackexchange comment](https://reverseengineering.stackexchange.com/questions/22223/use-gcc-and-objdump-to-disassemble-any-hex-to-assembly-code/23369#23369). Consider the following:
+#### opcode.c
+```c
 const char *input = "\x3d\xf0";
 int main () { return 0; }
 ```
@@ -194,31 +204,15 @@ Disassembly of section .rodata:
         ...
 ```
 
-Using methods like this and by referencing the official Xtensa ISA, we can build a python plugin that decodes all the instructions we need. I've written a module with 46 missing or incomplete instructions, which helps IDA greatly: [IDAPython script with missing instructions](esp32_plugin.py). Place it in $IDA/plugins.
+Apparently `3d f0` is a 2-byte NOP (the `.n` indicates two byte instructions).
+
+Using methods like this and by referencing the official Xtensa ISA, we can build a python plugin that decodes all the instructions we need. I've written a module with 47 missing or incomplete instructions, which helps IDA greatly: [IDAPython script with missing instructions](esp32_plugin.py). Place it in $IDA/plugins.
 
 ### Unreferenced Subroutines
-However, many subroutines are unreferenced, but most (possibly even all) functions begin with a `entry a1 0x?0` opcode. This is the bytes `36 ?1 0?`. Now, unfortunately, IDA doesn't let us search for nibble-strings, so we need to search for 0x36 and filter down the results. BIN_SEARCH_BITMASK would be really useful here, if it worked with `bin_search()`.
+However, many subroutines are still unreferenced. Fortunately, most (possibly even all) functions begin with a `entry a1 0x?0` opcode. This is bytes `36 ?1 0?`. Unfortunately, IDA doesn't let us search for nibble-strings, so we need to search for `0x36` and filter down the results. BIN_SEARCH_BITMASK would be really useful here, if it worked with `bin_search()`.
 
-```python
-ea = 0x0
-counter = 0
-image = ida_expr.idc_value_t("\x36\x01\x00").u_str()
-imask = ida_expr.idc_value_t("\xff\x0f\xf0").u_str()
-while True:
-    ea = ida_bytes.find_byte(ea+1,0xffffffff, 0x36, 0)
-    if ea == BADADDR:
-        break
-    if not ida_bytes.equal_bytes(ea, image, imask, 3, ida_bytes.BIN_SEARCH_BITMASK):
-        continue
-    if get_bytes(ea,3) == b'\x36\x01\x00':
-        continue # would be `entry a1,0`, which doesn't happen
-    if ida_funcs.get_func(ea):
-        continue # already a function here
-    mnem = ida_ua.ua_mnem(ea) 
-    if mnem and mnem != 'entry':
-        continue
-    add_func(ea)
-    counter += 1
-print("Created %d new functions."%counter)
-```
+{{% codefile code=py file=createFunctions.py %}}
+
+### Conclusion
+Hopefully, all this combined will get you from "what do I do with this badge" to searching strings, following XRefs, and figuring out functions quickly and efficiently.
 

@@ -1,0 +1,5 @@
+{{ $file := .Get "file" }}
+#### [{{ $file }}]({{ $file }})
+```{{ .Get "code" }}
+{{ (printf "%s%s" .Page.File.Dir $file) | readFile | safeHTML }}
+```
