@@ -1,10 +1,10 @@
 ---
-title: "challenge_led Intro"
+title: "Xtensa ESP32 Reversing"
 weight: 2
 ---
 
 ## TLDR
-Despite the implication, this is not a write-up for any particular NSEC challenge. Instead, it is a general guide to reverse engineering the Xtensa ESP32. This block is an outline and reference guide. More details follow.
+This is not a write-up for any particular NSEC challenge. Instead, it is a general guide to reverse engineering the Xtensa ESP32. This block is an outline and reference guide. More details follow.
 
 1. Get esptool: `pipx install esptool`
     - basic information: `esptool.py flash_id`
@@ -157,8 +157,12 @@ Hard resetting via RTS pin...
 ```
 
 ### Memory Dumps
-One of the many annoying things about reversing firmwares is finding the loader loop and correctly populating all the memory segments with the correct data. This can be circumvented, if we can dump RAM at runtime.
+One of the many annoying things about reversing firmwares is finding the loader loop and correctly populating all the memory segments with the correct data. This can be circumvented, if we can dump RAM at runtime. However, the ESP32 doesn't have a simple flat memory space. It's flat, but it's not simple.
 
+From the [ESP32 Technical Reference Manual](https://www.espressif.com/sites/default/files/documentation/esp32_technical_reference_manual_en.pdf):
+![ESP32 MPU and MMU Structure for Internal Memory](ESP32-Memory.png)
+
+Now, it's easy enough to dump the ROM segments and some of the RAM segments, but some of them are only populated by the runtime, and `esptool.py dump_mem` will reset the board into the bootloader in order to do the downloads. I had particular problems with SRAM2. A friend used JTAG to grab that segment for me. YMMV. The general form of the command is:
 ```sh
 [0](Ghroth)❯ esptool.py --chip esp32 --baud 115200 --port /dev/ttyUSB0 dump_mem $((0x4000_0000)) $((0x4006_0000-0x4000_0000)) irom0.bin
 ```
@@ -166,7 +170,7 @@ One of the many annoying things about reversing firmwares is finding the loader 
 I am providing a shell script to dump all the memory segments I could identify:
 {{% codefile code=sh file=dumpSegments.sh %}}
 
-Once you've got them all, you need to add them to IDA. Manually, this is done with File->Load file->Additional binary file..., followed by Segments->Edit Segment->..., but that's a lot of manual work. Instead, we could spend way more time browsing the IDAPython documentation and write a script to do it (use with File->Script File) (running it multiple times may be helpful):
+Once you've got them all, you need to add them to IDA. Manually, this is done with File->Load file->Additional binary file..., followed by Segments->Edit Segment->..., but that's a lot of work. Instead, we could spend way more time browsing the IDAPython documentation and write a script to do it (use with File->Script File).
 {{% codefile code=py file=addSegments.py %}}
 
 ## Reverse Engineering
