@@ -6,7 +6,7 @@ weight: 1
 At one of the tables, there was a gumball machine full of flags. But it didn't take coins, it took a code, entered with a numeric keypad.
 
 We were given the firmware: [machine.ino.standard.hex](machine.ino.standard.hex), and a schematic:
-![An Arduino UNO R3, with pins D3-D9 connecteed to a 3x4 matrix keypad, and pin D11 connected to a servo motor](candy-schematic.png)
+![An Arduino UNO R3, with pins D3-D9 connected to a 3x4 matrix keypad, and pin D11 connected to a servo motor](candy-schematic.png)
 
 ## Reverse Engineering
 First things first, we open the firmware.hex in IDA. However, IDA cannot detect binary types with .hex files. From the provided diagram, we know it's an Arduino UNO R3, which uses an ATMEL ATMEGA328P.
@@ -31,7 +31,9 @@ ROM:006E 9005                      lpm     r0, Z+          ; Load Program Memory
 ROM:006F 920D                      st      X+, r0          ; Store Indirect
 ```
 
-Note how the addresses at the left are only going up by 1 per line, but there are clearly two bytes per line. All the registers on this chip are 8-bit, and all instructions are 16-bit. Therefore, it takes two instructions to load a 16-bit address into a pair of registers. The first two pairs of lines do `X:=0x100`, and `Z:=0xDA6`. Now, Z is used to load **program** memory, that means ROM, so while the chip and GDB call this 0xDA6, IDA calls it `ROM:06D3`. On the other hand, when it's written to the address in X, it goes to `RAM:0100`. No translation necessary.
+Note how the addresses at the left are only going up by 1 per line, but there are clearly two bytes per line. All the registers on this chip are 8-bit, and all instructions are 16-bit. Similarly, a 16-bit instruction+register+value cannot load a register with a 16-bit immediate. So, it takes two instructions to load a 16-bit address into a pair of registers. The first two pairs of lines do `X:=0x100`, and `Z:=0xDA6`.
+
+Now, Z is used with the ``lpm`` instruction to load **program** memory, that means ROM. While the chip and GDB call this ``0xDA6``, IDA calls it `ROM:06D3`. On the other hand, when it's written to the address in X, it goes to `RAM:0100`. No translation necessary.
 
 So, summary of _RESET:
 - .rwdata is 38 bytes, comes from ``ROM:06D3``, and goes to ``RAM:0100``
@@ -52,7 +54,7 @@ Second, there's the two strings at the end of ROM, this is the second set of "su
 (gdb) x/s 0xDA6 + 0x7
 0xdad:  "123456789*0#"
 (gdb) x/s 0xDA6 + 0x1D
-0xdc3:  "734 52912"
+0xdc3:  "73452912"
 ```
 
 The second of those looks a lot like an unlock code, of course it doesn't work. However, the code is part of the block that gets copied to RAM, with a base of 0x100 and an offset of 0x1D. There are no XREFs to either, which suggests that it's accessed by pointer (unsurprising, since it's a string). With a binary this small, IDA Text search for "0x1D" will find where it's used. (On a better supported Assembly, IDA would be able to detect these multi-instruction address loads.)
@@ -65,17 +67,19 @@ ROM:0562 940E 06C8                 call    sub_6C8         ; Call Subroutine
 ROM:0564 2B89                      or      r24, r25        ; Logical OR
 ROM:0565 F599                      brne    loc_599         ; Branch if Not Equal
 ```
-It's not hard to guess what sub_6C8 is going to do with two pointers, but a little reversing confirms that it is ``strcmp()``. Next would be finding out where and how ``RAM:0012D`` is populated, but that's hard. (The challenge creator later mentioned he used a standard library for this, which explains the complexity of the code that reads pins and converts the button to ASCII.)
+It's not hard to guess what ``sub_6C8`` is going to do with two pointers (one of which is known to be a string), but a little reversing confirms that it is ``strcmp()``. Next would be finding out where and how ``RAM:012D`` is populated, but that's hard. (The challenge creator later mentioned he used a standard library for this, which explains the complexity of the code that reads pins and converts the button to ASCII.)
 
 ## Keypads
 A brief aside on keypads:
 
-Keypads are passive. They don't have chips or logic or anything. They don't even have power rails. It's a 3x4 grid of wires connected by membrane keyswitches. In this case the designer put pull-up resistors on the rows. The way the code checks if a button is pushed is by setting a column put to "output" and "low", and checking the row pins to see if any of them got pulled low. This is hard to fake in GDB. If you just pull a row low, then when the code polls the first column it will see the low value and read that the corresponding button in the first column is pressed. There's no easy way to simulate other column buttons.
+Keypads are passive. They don't have chips or logic or anything. They don't even have power rails. It's a 3x4 grid of wires connected by membrane keyswitches. The way the code checks if a button is pushed is by putting pull-up resistors on the rows, setting a particular column to "output" and "low", then checking the row pins to see if any of them got pulled low.
+
+This is hard to fake in GDB. If you just pull a row low, then when the code polls the first column it will see the low value and read that the corresponding button in the first column is pressed. There's no easy way to simulate other column buttons. We need a better simulation environment.
 
 ## Simulators
 My first choice for simulating AVR binaries is [simavr](https://github.com/buserror/simavr). However, I don't know how to simulate peripherals with it.
 
-There's a nice emulator at [wowki](wokwi.com), which supports either source or .hex, and peripherals, and debugging, but not debugging of .hex; otherwise it's great.
+There's a nice emulator at [wowki](wokwi.com), which supports input as either source or .hex, peripherals, and debugging. But, not debugging of .hex; otherwise it's great.
 
 The one that did all three is [PICSIMLab](https://github.com/lcgamboa/picsim). Steps:
 - File -> Load Hex -> machine.ino.standard.hex
@@ -116,7 +120,7 @@ commands
 end
 ```
 
-At this point we can push buttons on the gui and see how things work out. For example the sequence "258#" gives this output:
+At this point we can push buttons on the GUI and see how things work out. For example the sequence "258#" gives this output:
 ```bash
 Breakpoint 1, 0x00000a9a in ?? ()
 $1 = 0x32
