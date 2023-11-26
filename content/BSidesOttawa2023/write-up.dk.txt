@@ -1,0 +1,185 @@
+
+==== Vinegar Cipher ====
+This was the sixth in a series of pre-modern cryptography challenges. Previous levels used things like [[Atbash|https://en.wikipedia.org/wiki/Atbash]], or the [[Playfair cipher|https://en.wikipedia.org/wiki/Playfair_cipher]]. This level is a variation on the [[Vigenère cipher|https://en.wikipedia.org/wiki/Vigen%C3%A8re_cipher]].
+
+We are given the following Python code sample:
+<code python vinegar_code_sample.py>
+def vinegar_encrypt(plaintext, key):
+    encrypted_text = []
+    key_length = len(key)
+    key = key.upper()  # Convert the key to uppercase for consistency
+    index = 0  # Initialize an index counter
+
+    entropyList = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 666, 16, 17, 18, 1, 66, 65, 999] # This is definitely enough entryopy to defeat those lame hackers! LOL!
+
+    for char in plaintext:
+        if char.isalpha():
+            key_char = key[index % key_length]
+            if char.isupper():
+                shift = ord('A')  # Base shift value for uppercase letters
+            elif char.islower():
+                shift = ord('a')  # Use lowercase shift value for lowercase letters
+            encrypted_char = chr((((ord(char) * entropyList[index % len(entropyList)]) - shift + (ord(key_char) - ord('A'))) % 26) + shift) # NEW and COOL cyber pickle crypto math, hell yeah!!
+            #encrypted_char = chr(((ord(char) - shift + (ord(key_char) - ord('A'))) % 26) + shift) ## BAD and OLD 16th century french guy crypto math!! LOL!!
+
+            index += 1  # Increment the index only for alphanumeric characters
+        else:
+            encrypted_char = char
+        encrypted_text.append(encrypted_char)
+
+    return ''.join(encrypted_text)
+
+import sys
+args = sys.argv
+pt = args[1]
+k = args[2]
+ct = vinegar_encrypt(pt,k)
+print(ct)
+</code>
+
+To summarize the above, it's a regular Vigenère cipher, except that the input character is multiplied by a value from the "entropyList" before being processed. If it was addition, it would basically be like applying two Vigenère ciphers on top of each other, one with a known key, so we could subtract out the entropyList and then use regular cracking techniques. However, multiplication causes different problems.
+
+Not problems for us mind you, problems for the cipher. Pop-quiz:
+    Q. If you take the remainder of an even number modulo 26 what do you get?
+    A. An even number.
+
+Ok, but so what? The "so what" is that if entropyList[i] is even, then the input to the Vigenère cipher is even, and we can thus calculate the parity of the key. If the key[i] is even, then encrypted_text[i] must be even; if key[i] is odd, then encrypted_text[i] must be odd.
+
+Ok, great, but just knowing odd or even isn't quite enough, is it? Nope, but the exact same logic applies for divisible-by-thirteen-ness. Two value of entropyList are equivalent to 13 modulo 26 (13 and 65, at indices 12 and 21). So we can use the exact same logic to narrow down the key[12], and key[21] to just just two values modulo 26. Then we can use the Chinese Remainder theory to calculate the exact key value.
+
+As long as the message is at least (key_length * 23) characters long, and the key_length is coprime with entropyList list (23, prime which is helpful) we can get full key recovery. Because this is a CTF and time is short, my code actually just iterates over all possible key letters at every position and checks which could have possibly generated the ciphertext. It then folds that array over itself and looks for non-empty intersections at all plausible key lengths. Despite it's inefficiency, this gets the correct answer nearly instantly. Source code below.
+
+Also, the key is the flag so we could be done here.
+
+However, we are unsatisfied. We were given a ciphertext, and would like to decrypt it, thank you very much. However, there's a problem here: The weakness above makes the encryption lossy. Many bits of message information are gone. A relatively simple bruteforce algorithm can easily calculate what letters could have gone in every position, but at many positions that list is half the alphabet. My solution to this problem was a dictionary attack:
+    - Split the input into words (preserving spaces and punctuation).
+    - Turn each word into a regular expression of possible characters at each positions.
+    - 
+
+==== Server Log ====
+==== Mysterious Pickle ====
+==== Broken PNG ====
+We get "Screenshot_20200321-211538.png"
+
+exiftool reports:
+> [minor] Trailer data after PNG IEND chunk
+pngcheck reports
+> 27 IDAT chunks
+> additional data after IEND chunk
+
+Slicing off everything after, we get:
+    grep -abo IEND Screenshot_20200321-211538.png
+    220002:IEND
+    806333:IEND
+    dd if=Screenshot_20200321-211538.png of=first.png bs=1 count=$((220002+8))
+    ...
+    dd if=Screenshot_20200321-211538.png of=second.png bs=1 skip=$((220002+8))
+    ...
+
+The former (first.png) is clean. The latter... has 72 IDAT statements, and an
+IEND... It's clearly a slice of a png. However, we appear to start mid-chunk.
+
+=== analysis ===
+__The relevant sections__:
+00034170: 0158 15be 271d 0000 19dc 4944 4154 66d7  .X..'.....IDATf.
+00034180: 6eb1 93de 3a12 259d 4dbc 93d2 73ce bf3c  n...:.%.M...s..<
+    - CRC of previous chunk: 15be 271d (valid)
+    - Length of this chunk:  0000 19dc / 6620
+    - chunk id:              4944 4154 / IDAT
+    - start of this chunk:   66d7 6eb1 93de 3a12 ....
+00035b50: 0000 806b f5ff a447 accc 51d3 05cd 0000  ...k...G..Q.....
+00035b60: 0000 4945 4e44 ae42 6082 b27a 6f8a 3b63  ..IEND.B`..zo.;c
+    - CRC of previous chunk: 51d3 05cd
+    - Length of this chunk:  0000 0000 / 0 (normal for IEND)
+    - chunk id:              4945 4e44 / IEND
+    - there is no body
+    - CRC of this chunk:     ae42 6082 / empty CRC
+    - following data...      b27a 6f8a 3b63 
+00036170: 4ecf 996f 7bac d5f8 d573 f587 95d9 3012  N..o{....s....0.
+00036180: 6700 0020 0049 4441 543e 8b39 a0e5 b35a  g.. .IDAT>.9...Z
+    - CRC of previous chunk: d9 3012 67 (note odd offset)
+    - Length of this chunk:  00 0020 00 / 8192
+    - chunk id:              49 4441 54 / IDAT
+    - start of this chunk:   3e 8b39 a0e5 b3
+    - note: this chunk has a valid CRC (later).
+
+Assessment:
+    we have: a valid png, with a last chunk size of 6620
+    what looks like 1555 bytes of data, followed by a likely CRC
+    a sequence of valid IDATs followed by a valid IEND
+
+Problem:
+    - we need to recover the data in the png fragment
+    - it's possible 
+
+
+Theory:
+    - what if I can splice this into the start of the file?
+        - first IDAT is at byte offset 66
+        - second IDAT is at byte offset 8270
+        - appending png fragment has first IDAT at byte offset 1563
+        -> failed, invalid CRC, but the data already was off the rails
+        -> tried this with all chunks, all failed.
+    - there are 1555 bytes of
+
+=== How Deflate Works ===
+Reading manually:
+A zlib deflate stream starts with one of:
+    78 01 - No Compression/low
+    78 5E - Fast Compression
+    78 9C - Default Compression
+    78 DA - Best Compression 
+    - genearlly deflate window size is 32k
+    - other compression types are possible, especially 5E
+    - other first bytes are possible, but even less likely
+Binwalk can detect these, and doesn't notice another one.
+
+Each block has a 3 bit header
+    usually 0.10 meaning "not the last block" and "huffman with supplied table"
+
+=== analysis ===
+The second slice starts with 1559 random bytes. The first slice's last IDAT is 6620 bytes. 8179
+
+Regular chunk
+    8204 = 4-byte length + "IDAT" + 8192-bytes data + 4-byte CRC
+
+Theory, someone overwrite the IDAT with an IEND. Relevant sections:
+> 00035b50: 0000 806b f5ff a447 accc 51d3 05cd 0000  ...k...G..Q.....
+> 00035b60: 0000 4945 4e44 ae42 6082 b27a 6f8a 3b63  ..IEND.B`..zo.;c
+> ...
+> 00036170: 4ecf 996f 7bac d5f8 d573 f587 95d9 3012  N..o{....s....0.
+> 00036180: 6700 0020 0049 4441 543e 8b39 a0e5 b35a  g.. .IDAT>.9...Z
+
+Now, what do we know:
+    the format should be Length | IDAT | DATA | CRC
+    Length is 1559 or 0x0000_0617
+    IDAT is "IDAT" or 0x4944_4154
+    the four bytes after IEND have been squished. That's ".B`." or  0xae426082
+    CRC is            0xd930_1267
+
+Using https://github.com/madler/spoof
+    correct Length and IDAT, zero out unknown bytes, run ``pngcheck -v``
+    > CRC error in chunk IDAT (computed 0199cec1, expected d9301267)
+Input:
+    polynomial: x^32 + x^26 + x^23 + x^22 + x^16 + x^12 + x^11 + x^10 + x^8 + x^7 + x^5 + x^4 + x^2 + x^1 + 1
+    -> 32 04c11db7 0
+    xor: d8a9dca6
+    length: 1559
+    bits available to change
+        0 0 .. 0 7 .. 3 7
+
+<code ruby>
+ds = ''
+offset = 0x3e
+loop do
+    length = ss[offset,4].unpack('N').first; offset+=4
+    id = ss[offset,4]; offset+=4
+    ds += ss[offset,length]; offset+=length
+    crc = ss[offset,4]; offset+=4
+    break if id == 'IEND'
+end
+length = 1555
+ds += ss[offset,length]; offset+=length
+offset += 4 # CRC
+
+</code>
